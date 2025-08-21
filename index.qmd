@@ -1,0 +1,41 @@
+---
+title: "MICHELLE NGUYEN"
+---
+Hi, I’m Michelle 👋  
+
+I’m a graduate student at Baruch College studying Marketing Analytics.  
+I have professional experience in marketing, e-commerce, and project management
+
+- 📍 Based in NYC  
+- 💼 Formerly worked for clients such as L’Oréal, AmorePacific, and Shiseido  
+- 🎓 Master’s in Marketing Communication (UK)  
+
+You can connect with me on [LinkedIn](https://www.linkedin.com/in/nht2307).  
+
+```{r}
+#| include: false
+1+1
+```
+--------------
+Last Updated: `r format(Sys.time(), "%A %m %d, %Y at %H:%M%p")`
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+if(!require("leaflet")){
+    options(repos=c(CRAN="https://cloud.r-project.org"))
+    install.packages("leaflet")
+    stopifnot(require("leaflet"))
+}
+
+baruch_longitude <- -73.98333
+baruch_latitude  <- +40.75028
+
+leaflet() |>
+  addTiles() |>
+  setView(baruch_longitude, baruch_latitude, zoom=17) |>
+  addPopups(baruch_longitude, baruch_latitude, 
+            "I am a Master's student at <b>Baruch College</b>!")
+```
