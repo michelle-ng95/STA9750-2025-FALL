@@ -1,6 +1,7 @@
 project:
-  type: website
-  output-dir: docs
+format:
+  html:
+    output-file: docs/mp01.html
 
 website:
   title: "Mini-Project #01: Gourmet Cheeseburgers Across the Globe: Exploring the Most Popular Programming on Netflix"
