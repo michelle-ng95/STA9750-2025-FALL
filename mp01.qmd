@@ -7,10 +7,13 @@ format:
     toc-depth: 3
     toc-location: left
     code-fold: true      
-    code-summary: "Show Code"  
+    code-summary: "Show Code"
+    theme: journal                
 execute:
   warning: false
   message: false
+project:
+  output-dir: docs
 ---
 ## Introduction
 
