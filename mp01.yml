@@ -1,0 +1,20 @@
+project:
+  type: website
+  output-dir: docs
+
+website:
+  title: "Mini-Project #01: Gourmet Cheeseburgers Across the Globe: Exploring the Most Popular Programming on Netflix"
+  description:
+    Course Projects for STA 9750 at Baruch College
+  site-url: "https://michelle-ng95.github.io/STA9750-2025-FALL/mp01.html"
+  navbar:
+    background: primary
+    search: false
+    
+format:
+  html:
+    theme: journal
+    toc: false
+
+editor:
+  mode: source
