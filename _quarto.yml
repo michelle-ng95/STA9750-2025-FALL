@@ -10,7 +10,11 @@ website:
   navbar:
     background: primary
     search: false
-    
+     left:
+      - text: "Mini-Projects"
+        menu:
+          - text: "MP01"
+            href: mp01.html
 format:
   html:
     theme: journal
