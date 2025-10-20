@@ -4,17 +4,16 @@ project:
 
 website:
   title: "STA 9750 Submission Material"
-  description:
-    Course Projects for STA 9750 at Baruch College
+  description: "Course Projects for STA 9750 at Baruch College"  
   site-url: "https://michelle-ng95.github.io/STA9750-2025-FALL/"
   navbar:
     background: primary
     search: false
-     left:
-      - text: "Mini-Projects"
-        menu:
-          - text: "MP01"
-            href: mp01.html
+    right:
+      - href: index.qmd
+        text: Home
+      - href: mp01.qmd
+        text: Mini Project One
 format:
   html:
     theme: journal
