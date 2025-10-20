@@ -1,5 +1,5 @@
 ---
-title: "Mini-Project #01: Gourmet Cheeseburgers Across the Globe: Exploring the Most Popular Programming on Netflix"
+title: "Mini Project One"
 author: "Michelle Nguyen"
 format:
   html:
