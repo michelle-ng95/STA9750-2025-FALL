@@ -13,7 +13,9 @@ website:
       - href: index.qmd
         text: Home
       - href: mp01.qmd
-        text: Mini Project One
+        text: Mini Project 1
+      - href: mp02.qmd
+        text: Mini Project 2
 format:
   html:
     theme: journal

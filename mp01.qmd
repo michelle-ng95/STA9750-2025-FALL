@@ -1,5 +1,5 @@
 ---
-title: "Mini Project One"
+title: "Mini Project 1"
 author: "Michelle Nguyen"
 format:
   html:
