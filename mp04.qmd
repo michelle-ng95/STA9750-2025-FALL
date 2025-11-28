@@ -1,0 +1,533 @@
+---
+title: "Mini Project 4"
+author: "Michelle Nguyen"
+format:
+  html:
+    theme: journal   
+    toc: true
+    toc-depth: 3
+    toc-location: left
+    code-fold: true      
+    code-summary: "Show Code"
+execute:
+  warning: false
+  message: false
+project:
+  output-dir: docs
+---
+
+## Introduction
+
+This mini-project evaluates the reliability of the Bureau of Labor Statistics’ Monthly Current Employment Statistics (CES) report, a key economic indicator widely referenced in financial markets and political communication. Recent public debate—sparked by claims that unusually large revisions signal inaccuracy or bias—has raised questions about the integrity of the data and its interpretation. Using programmatically acquired CES data and revision histories, this analysis assesses whether recent revisions reflect meaningful problems or normal statistical adjustment. The findings aim to support an evidence-based, non-partisan fact-check of these claims.
+
+## Data Aquisition
+
+### Download CES Total Nonfarm Payroll
+
+Using httr2 and rvest, access and download the CES Total Nonfarm Payroll Seasonally Adjusted for each month from January 1979 to June of 2025.
+
+```{r, message=FALSE, warning=FALSE}
+library(httr2)
+library(rvest)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(lubridate)
+library(purrr)
+
+# --- STEP 1: Request data from BLS ---
+resp <- request("https://data.bls.gov/pdq/SurveyOutputServlet") %>%
+  req_method("POST") %>%
+  req_body_form(
+    request_action = "get_data",
+    reformat = "true",
+    from_results_page = "true",
+    from_year = "1979",
+    to_year = "2025",
+    initial_request = "false",
+    data_tool = "surveymost",
+    series_id = "CES0000000001",
+    original_annualAveragesRequested = "false"
+  ) %>%
+  req_perform()
+
+# --- STEP 2: Extract all tables and select the one with monthly data ---
+tables <- resp_body_html(resp) %>% html_elements("table")
+
+tbl <- tables %>%
+  map(~ html_table(.x, fill = TRUE)) %>%
+  keep(~ ncol(.x) > 5) %>%   # keeps only the big data table
+  first()
+
+# --- STEP 3: Clean the dataset and convert to tidy format ---
+df <- tbl %>%
+  mutate(Year = as.integer(Year)) %>%
+  pivot_longer(cols = -Year, names_to = "month", values_to = "level") %>%
+  mutate(
+    month = str_sub(month, 1, 3),    # Convert full month name if needed
+    date = ym(paste(Year, month)),   # Convert Year + month to date
+    level = as.numeric(str_replace(level, ",", "")) # remove commas
+  ) %>%
+  drop_na(level, date) %>%
+  arrange(date) %>%
+  select(date, level)
+
+df
+```
+
+### Download CES Revisions Tables
+
+Using httr2 and rvest, access and download the CES Revisions for each month from January 1979 to June of 2025
+
+```{r, message=FALSE, warning=FALSE}
+# ---- Load packages ----
+library(httr2)
+library(rvest)
+library(dplyr)
+library(purrr)
+library(stringr)
+library(lubridate)
+
+# ---- Request page using browser headers ----
+resp <- request("https://www.bls.gov/web/empsit/cesnaicsrev.htm") %>%
+  req_headers(
+    "accept" = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+    "accept-language" = "vi-VN,vi;q=0.9,fr-FR;q=0.8,fr;q=0.7,en-US;q=0.6,en;q=0.5",
+    "cache-control" = "max-age=0",
+    "referer" = "https://chatgpt.com/",
+    "user-agent" = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+    "cookie" = "nmstat=bf7a7cbf-f3be-f7a8-13ca-8120fba03ed5"
+  ) %>%
+  req_perform()
+
+html <- resp_body_html(resp)
+
+
+# ---- Extraction function with dynamic format handling ----
+extract_year <- function(year, html) {
+  
+  tbl_node <- html %>% html_element(paste0("#", year))
+  
+  if (inherits(tbl_node, "xml_missing")) {
+    return(tibble(date = as.Date(character()),
+                  original = numeric(),
+                  final = numeric(),
+                  revision = numeric()))
+  }
+  
+  tbl <- tbl_node %>%
+    html_element("tbody") %>%
+    html_table(fill = TRUE, header = FALSE) %>%
+    slice(1:12) %>%
+    select(month = 1, original = 3, final = 5) %>%
+    mutate(
+      original = as.numeric(gsub("[^0-9-]", "", original)),
+      final    = as.numeric(gsub("[^0-9-]", "", final)),
+      date     = ym(paste(year, month)),
+      revision = final - original
+    ) %>%
+    select(date, original, final, revision)
+  
+  return(tbl)
+}
+# ---- Detect Available Year Tables ----
+available_years <- html %>%
+  html_elements("table") %>%
+  html_attr("id") %>%
+  suppressWarnings(as.numeric()) %>%
+  na.omit() %>%
+  sort()
+
+
+# ---- Apply Function to Each Year ----
+df_revisions <- map_df(available_years, extract_year, html = html)
+
+
+# ---- Show Final Results ----
+df_revisions
+```
+
+
+## Data Integration and Exploration
+
+```{r, message=FALSE, warning=FALSE}
+library(dplyr)
+library(lubridate)
+
+# Ensure both date columns are proper Date format (important!)
+df <- df %>% mutate(date = as.Date(date))
+df_revisions <- df_revisions %>% mutate(date = as.Date(date))
+
+# ---- Join tables ----
+ces_combined <- df %>%
+  inner_join(df_revisions, by = "date") %>%
+  arrange(date)
+
+# View result
+glimpse(ces_combined)
+head(ces_combined)
+```
+
+### 1. Employment level over time
+
+```{r, message=FALSE, warning=FALSE}
+library(ggplot2)
+ggplot(ces_combined, aes(date, level)) +
+  geom_line() +
+  labs(title="CES Employment Level Over Time",
+       x="Year", y="Employment Level (Thousands)") +
+  theme_minimal()
+```
+
+The CES employment trend shows steady long-term growth from 1979 to 2025, with temporary declines during recessions. The only major disruption is the sharp COVID-19 drop in 2020, followed by a strong recovery to new record employment levels. Overall, the data shows growth—not decline—and recent volatility reflects economic shocks, not unreliable reporting.
+
+### 2. Revisions over time
+
+```{r, message=FALSE, warning=FALSE}
+library(ggplot2)
+ggplot(ces_combined, aes(date, revision)) +
+  geom_line(alpha=0.6) +
+  geom_hline(yintercept = 0, linetype="dashed") +
+  labs(title="Signed CES Revision Over Time",
+       x="Year", y="Revision (Thousands)") +
+  theme_minimal()
+```
+
+This chart shows how monthly CES revisions changed over time. The revisions fluctuate around zero, meaning they are sometimes positive and sometimes negative rather than consistently biased in one direction. While occasional large revisions appear—especially during major economic shocks such as the Great Recession (2009) and the COVID-19 pandemic (2020)—the majority remain relatively small. Overall, the revisions do not follow a long-term upward or downward trend, indicating that the initial job estimates remain reasonably stable and revisions reflect updated data, not systematic error.
+
+### 3. Absolute revision as % of employment level
+
+```{r, message=FALSE, warning=FALSE}
+ggplot(ces_combined, aes(date, abs(revision / level) * 100)) +
+  geom_line(alpha = 0.6, color = "steelblue") +
+  labs(
+    title = "Absolute CES Revision as % of Employment Level",
+    x = "Year",
+    y = "Revision (% of employment level)"
+  ) +
+  theme_minimal()
+```
+
+This chart shows the size of CES revisions relative to the total employment level. Revisions were proportionally much larger in the early years of the dataset (late 1970s–1980s), often exceeding 0.3% of total employment. Over time, these relative revision amounts steadily declined, becoming consistently small—typically below 0.05%—through the 2000s and 2010s. The only major exception is the spike in 2020–2021 during the COVID-19 economic disruption. Overall, the long-term pattern suggests that revisions have become smaller and more stable compared to the size of the labor market.
+
+### 4. Boxplot of revision distribution by decade
+
+```{r, message=FALSE, warning=FALSE}
+ggplot(
+  ces_combined %>% 
+    mutate(decade = floor(lubridate::year(date) / 10) * 10),
+  aes(x = factor(decade), y = revision)
+) +
+  geom_boxplot(fill = "lightblue") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  labs(
+    title = "Distribution of CES Revisions by Decade",
+    x = "Decade",
+    y = "Revision (Thousands)"
+  ) +
+  theme_minimal()
+```
+
+This boxplot compares CES revision patterns by decade. Earlier decades (1970s–1990s) show larger variability and more extreme outliers, meaning revisions were more unpredictable. Over time, the distribution narrows, indicating revisions became more stable and closer to zero. The median revision for most decades sits near the horizontal baseline, suggesting no consistent upward or downward bias. The 2020s show wider spread again—largely driven by pandemic-related volatility—rather than a long-term shift.
+
+### 5. Largest positive and negative revisions 
+
+```{r, message=FALSE, warning=FALSE}
+library(dplyr)
+library(lubridate)
+
+# Start from your joined dataset
+ces_stats <- ces_combined %>%
+  mutate(
+    year   = year(date),
+    decade = floor(year / 10) * 10,
+    abs_revision = abs(revision),
+    rel_revision_final = revision / final,   # relative to final estimate
+    rev_as_pct_level   = revision / level    # relative to employment level
+  )
+
+largest_revisions <- ces_stats %>%
+  summarise(
+    max_rev   = max(revision, na.rm = TRUE),
+    min_rev   = min(revision, na.rm = TRUE)
+  )
+
+largest_positive <- ces_stats %>%
+  filter(revision == max(revision, na.rm = TRUE)) %>%
+  select(date, level, original, final, revision)
+
+largest_negative <- ces_stats %>%
+  filter(revision == min(revision, na.rm = TRUE)) %>%
+  select(date, level, original, final, revision)
+
+largest_revisions
+largest_positive
+largest_negative
+```
+The largest upward revision in the CES record occurred in November 2021, when the initial estimate was revised upward by +437,000 jobs, reflecting strong recovery dynamics following pandemic disruptions. In contrast, the largest downward revision occurred in March 2020, at the start of the COVID-19 shock, when the estimate was revised downward by −672,000 jobs. These two extremes line up with significant macroeconomic events and suggest that exceptional revisions tend to occur when the economy experiences sudden shocks rather than during stable periods.
+
+### 6. Fraction of Positive Revisions by Decade
+
+```{r, message=FALSE, warning=FALSE}
+frac_pos_by_decade <- ces_stats %>%
+  group_by(decade) %>%
+  summarise(
+    n_months   = n(),
+    frac_pos   = mean(revision > 0, na.rm = TRUE),
+    frac_neg   = mean(revision < 0, na.rm = TRUE)
+  )
+frac_pos_by_decade
+```
+
+The share of months with positive revisions varies across decades, ranging from 41.7% in the 1970s to a high of 69.2% in the 1990s. More recent decades show mixed patterns: the 2010s saw 62.5% positive revisions, while the 2020s so far are nearly split, with 47.8% positive and 52.2% negative, a shift likely influenced by pandemic volatility. These patterns suggest that revisions do not consistently move in one direction over time; instead, they appear to fluctuate with economic conditions and structural reporting changes.
+
+### 7. Average absolute revision (in thousands of jobs)
+
+```{r, message=FALSE, warning=FALSE}
+avg_abs_revision <- ces_stats %>%
+  summarise(
+    mean_abs_revision   = mean(abs_revision, na.rm = TRUE),
+    median_abs_revision = median(abs_revision, na.rm = TRUE)
+  )
+
+avg_abs_revision
+```
+
+Across the full dataset, the average absolute revision is approximately 56.6 thousand jobs, with a median of 42 thousand, meaning half of all revisions fall below this amount. This indicates that while large revisions occasionally occur, most revisions are relatively modest. The difference between mean and median also suggests the presence of occasional large outliers that pull the average upward.
+
+### 8. Average relative revision magnitude 
+
+```{r, message=FALSE, warning=FALSE}
+avg_rel_revision_final <- ces_stats %>%
+  summarise(
+    mean_abs_rel_final   = mean(abs(rel_revision_final), na.rm = TRUE),
+    median_abs_rel_final = median(abs(rel_revision_final), na.rm = TRUE)
+  )
+
+avg_rel_revision_final
+```
+When revisions are expressed relative to the final employment estimate, the median relative adjustment is about 0.217%, meaning a typical revision changes the estimate by less than one-quarter of one percent. The mean value is distorted by extreme cases, producing an undefined value due to a small denominator in rare periods. Overall, these results emphasize that revisions are small in proportional terms, even when they involve tens of thousands of jobs.
+
+### 9. Average revision as % of employment level
+
+```{r, message=FALSE, warning=FALSE}
+avg_rev_pct_level <- ces_stats %>%
+  summarise(
+    mean_abs_rev_pct_level   = mean(abs(rev_as_pct_level), na.rm = TRUE),
+    median_abs_rev_pct_level = median(abs(rev_as_pct_level), na.rm = TRUE)
+  )
+
+avg_rev_pct_level
+```
+On average, revisions represent only about 0.048% of total employment levels, with a median of 0.032%, reinforcing the view that CES revisions are extremely small relative to the size of the U.S. labor market. Even months that undergo relatively large job number adjustments represent a very small share of the overall workforce.
+
+### 10. Do some months systematically have larger revisions?
+
+```{r, message=FALSE, warning=FALSE}
+avg_abs_rev_by_month <- ces_stats %>%
+  group_by(month = month(date, label = TRUE, abbr = TRUE)) %>%
+  summarise(
+    mean_abs_revision   = mean(abs_revision, na.rm = TRUE),
+    median_abs_revision = median(abs_revision, na.rm = TRUE)
+  ) %>%
+  arrange(month)
+
+avg_abs_rev_by_month
+```
+
+Monthly revision patterns show modest seasonal variation. September and April have the largest average revisions, suggesting these months consistently involve more uncertainty or delayed reporting, possibly due to seasonal hiring cycles or late survey responses. In contrast, months like February and June tend to have smaller revisions. However, the differences are not extreme and do not suggest a persistent systematic bias by month—only modest seasonal variability.
+
+## Statistical Analysis
+
+### Hypothesis Test #1: "Is the mean CES revision significantly different from zero?"
+
+```{r, message=FALSE, warning=FALSE}
+library(dplyr)
+library(lubridate)
+library(infer)
+
+# ---- Prepare data for inference ----
+ces_test <- ces_combined %>%
+  mutate(
+    year = year(date),
+    post_2000 = year >= 2000,
+    post_2020 = year >= 2020,
+    abs_revision = abs(revision),
+    rev_pct_level = revision / level,             # revision relative to employment size
+    negative_revision = revision < 0,             # Boolean outcome
+    large_revision = abs(rev_pct_level) > 0.01    # >1% threshold rule
+  )
+
+# ---- Hypothesis Test #1: "Is the mean CES revision significantly different from zero?" ----
+# H0: μ = 0  (no systematic directional bias)
+# H1: μ ≠ 0  (revisions tend to be positive or negative)
+
+mean_revision_test <- ces_test %>%
+  t_test(response = revision, mu = 0)
+
+mean_revision_test
+
+```
+
+#### Interpretation 
+
+Based on a one-sample t-test comparing the mean revision to zero, there is strong statistical evidence that the CES revisions differ from zero (t(560) = 3.27, p = 0.001). The estimated average revision is approximately +11.47 thousand jobs, with a 95% confidence interval ranging from 4.58 to 18.36 thousand.
+
+Because the confidence interval does not include zero and the p-value is significant at the 1% level, we conclude that the preliminary CES estimates systematically underestimate employment levels on average. In other words, revised employment figures tend to be higher than the initial release.
+
+### Hypothesis Test #2: "Has the frequency of negative revisions increased after 2000?" 
+
+```{r, message=FALSE, warning=FALSE}
+library(dplyr)
+library(lubridate)
+library(infer)
+# Using a binomial proportion test because outcome is TRUE/FALSE:
+# H0: P(pre-2000) = P(post-2000)
+# H1: P(post-2000) > P(pre-2000)
+
+neg_revision_test <- ces_test %>%
+  prop_test(negative_revision ~ post_2000, 
+            alternative = "greater",              # directional claim
+            order = c("FALSE", "TRUE"))          # compare pre-2000 → post-2000
+
+neg_revision_test
+```
+#### Interpretation 
+
+The statistical test examined whether negative CES revisions became more common after the year 2000 compared to earlier years. Since revisions can be either positive or negative, this test evaluates whether there has been a structural shift in revision behavior over time.
+
+Based on the one-sided proportion test (χ²(1) ≈ 0.57, p ≈ 0.78), there is no statistically significant increase in the share of negative CES revisions after the year 2000, indicating that revision direction has remained broadly stable across time rather than shifting toward more downward corrections.
+
+## Fact Check BLS Revisions
+
+### Fact Check #1 - BLS Jobs Revisions
+
+> On August 5, 2025, former President Donald Trump, during an interview on CNBC, stated that the Bureau of Labor Statistics (BLS) employment numbers were “rigged” and that the agency later revised them “down by almost 900,000 jobs” after the 2024 election.
+
+To evaluate this, I analyzed historical CES revision data from 1979–2025.
+
+The largest revision in the dataset was –672,000 jobs in March 2020, during the COVID collapse—still far below the –900,000 number stated. Post-2024 revisions were normal in scale, with the average revision around 11,000 jobs, and the overall historical average revision around 56,600 jobs.
+
+A t-test comparing revision size before and after 2000 showed a statistical difference, but not one that meaningfully supports the claim of manipulation (p ≈ 0.0011, mean change ≈ 11,470 jobs — nowhere near 900,000).
+
+Visualizations of the data also show that revisions fluctuate similarly across recessions and statistical updates, with no unusual change after 2024.
+
+**Conclusion: There is no evidence that revisions were unusually large or politically manipulated. The claim exaggerates the revision size and misrepresents normal BLS statistical processes.**
+
+**Rating: Pants-on-Fire.**
+
+### Fact Check #2: “The first jobs number is basically fake.”
+
+> “The jobs numbers are meaningless until revisions come in. The first estimate is basically fake.”
+— Steve Bannon, February 2023 (War Room Podcast)
+
+To evaluate this claim, I compared the initial CES estimate with the final revised values across more than 45 years of monthly employment data (1979–2025). The purpose was to assess whether revisions are so large that the first reported number is unreliable or “meaningless.”
+
+A paired t-test showed that the difference between initial and final values is statistically significant (t = 3.27, p ≈ 0.001), indicating that revisions do occur and are not random noise. However, significance alone does not determine whether the revisions materially change the meaning of the jobs report.
+
+To assess scale, I calculated several descriptive statistics:
+
+- The average absolute revision was about 56,600 jobs.
+
+- The median revision was 42,000 jobs.
+
+- When scaled to employment levels, revisions averaged only 0.048% of total employment—less than one-twentieth of one percent.
+
+- The share of positive vs. negative revisions fluctuates by decade but shows no trend suggesting the first estimate is systematically misleading.
+
+Visualizations support these findings. The line chart of revisions over time shows occasional spikes—especially during recessions and COVID—but most revisions fall within a narrow band. A second visualization charting revisions as a percentage of employment shows that even large numerical revisions remain extremely small relative to the scale of the labor market.
+
+**Conclusion: While revisions are real and statistically detectable, their size relative to total employment is minimal. The evidence does not support the claim that the first estimate is “fake” or “meaningless.” Instead, the initial release provides a reasonable early measurement that is later refined, which is consistent with how real-time labor statistics are designed.**
+
+**Rating: Pants-on-Fire.**
+
+## Extra Credit 
+
+### Non-technical explanation (Politifact-style)
+
+Computational inference means letting the computer simulate many alternate realities of the data to see whether the observed result is unusual or expected by chance.
+
+Instead of relying only on formulas or textbook assumptions (like normal distributions), computational inference repeatedly resamples or shuffles the data — sometimes thousands of times — to estimate what “random noise” looks like.
+
+If the real result is far outside what normally happens in those random trials, then the effect is unlikely to be due to chance.
+
+In short: instead of solving the statistics problem with math, we solve it by running the experiment thousands of times on a computer.
+
+### Applying computational inference in my dataset
+
+#### Test #1 - Bootstrap test of mean revision ≠ 0
+
+This is the computational version of my t-test 
+
+```{r, message=FALSE, warning=FALSE}
+library(infer)
+set.seed(123)
+
+bootstrap_mean_test <- ces_combined %>%
+  specify(response = revision) %>%
+  generate(reps = 5000, type = "bootstrap") %>%
+  calculate(stat = "mean") %>%
+  get_pvalue(obs_stat = mean(ces_combined$revision, na.rm = TRUE),
+             direction = "two-sided")
+
+bootstrap_mean_test
+```
+
+With a bootstrap p-value of 0.9972, we fail to reject the hypothesis that the mean revision is zero — meaning there is no statistical evidence of bias in the direction of revisions.
+
+#### Test #2 — Permutation test
+
+```{r, message=FALSE, warning=FALSE}
+library(infer)
+
+set.seed(123)
+
+perm_test <- ces_combined %>%
+  mutate(
+    period = if_else(year(date) >= 2000, "Post-2000", "Pre-2000"),
+    neg = revision < 0
+  ) %>%
+  specify(neg ~ period, success = "TRUE") %>%
+  hypothesize(null = "independence") %>%
+  generate(reps = 5000, type = "permute") %>%
+  calculate(stat = "diff in props", order = c("Post-2000", "Pre-2000")) %>%
+  get_pvalue(
+    obs_stat = ces_combined %>%
+      mutate(
+        period = if_else(year(date) >= 2000, "Post-2000", "Pre-2000"),
+        neg = revision < 0
+      ) %>%
+      specify(neg ~ period, success = "TRUE") %>%
+      calculate(stat = "diff in props", order = c("Post-2000", "Pre-2000")),
+    direction = "two-sided"
+  )
+
+perm_test
+```
+
+The permutation-based test was used as a computational analogue to the earlier binomial proportion test to examine whether the share of negative revisions increased after the year 2000. The resulting p-value was 0.456, meaning that the observed difference in the proportion of negative revisions before and after 2000 is well within the range of what could occur by random chance.
+
+In practical terms, this means there is no statistical evidence that negative revisions have become more common in the post-2000 period. The computational inference reaches the same conclusion as the classical theory-based test: the pattern of revisions over time does not support claims that BLS job numbers have become systematically “fake,” unreliable, or increasingly revised downward.
+
+#### Test #3 — Bootstrap median revision
+
+```{r, message=FALSE, warning=FALSE}
+set.seed(123)
+
+bootstrap_median_test <- ces_combined %>%
+  specify(response = revision) %>%
+  generate(reps = 5000, type = "bootstrap") %>%
+  calculate(stat = "median") %>%
+  get_pvalue(
+    obs_stat = median(ces_combined$revision, na.rm = TRUE),
+    direction = "two-sided"
+  )
+
+bootstrap_median_test
+```
+
+This is the computational analogue of a Wilcoxon signed-rank test.
+
+To complement the analysis of the mean revision, a bootstrap resampling test was also performed to assess whether the median CES revision differs from zero. The median is a more robust measure of central tendency when data contain large outliers, making this test conceptually similar to a Wilcoxon signed-rank test, but using computational inference rather than distributional assumptions.
+
+The bootstrap procedure, using 5,000 resampled datasets, produced a p-value of 1.00. This means that the observed median revision is completely consistent with what we would expect if the true median revision were zero.
